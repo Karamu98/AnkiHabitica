@@ -1,3 +1,4 @@
+#!/usr/bin/python
 from .habitica_api import HabiticaAPI
 import os
 import sys
@@ -13,7 +14,9 @@ from . import db_helper
 from anki.utils import intTime
 from aqt.utils import tooltip
 from .ah_common import AnkiHabiticaCommon as ah
-from urllib.error import HTTPError
+
+NOTES_START_TAG: str = """\n```{r echo=FALSE}"""
+NOTES_END_TAG: str = """\n```"""
 
 
 # TODO: make sure script can survive internet outages.
@@ -44,7 +47,7 @@ class Habitica(object):
         self.hnote = None
         self.habit_grabbed = False  # marked true when we get scorecounter.
         # holder for habit IDs
-        self.habit_id = ah.config[ah.settings.profile].get('habit_id')
+        self.habit_id = ah.config[ah.settings.profile]['habit_id']
         self.missing = False  # holds missing habits
         self.init_update()  # check habits, grab user object, get avatar
         if ah.user_settings["keep_log"]:
@@ -364,29 +367,19 @@ class Habitica(object):
             self.check_anki_habit()
         if ah.user_settings["keep_log"]:
             ah.log.debug("grabbing scorecounter: %s" % str(self.habit_id))
-        try:
-            response = self.api.task(self.habit_id)
-        except HTTPError as err:
-            if err.code == 401:
-                self.hrpg_showInfo("Your User ID or API Token is incorrect, please setup again with correct infomation.")
-                ah.habitica = None
-                ah.settings.initialized = False
-                ah.config[ah.settings.profile].pop("user")
-                ah.config[ah.settings.profile].pop("token")
-                ah.settings.user = None
-                ah.settings.token = None
-                if ah.user_settings["keep_log"]:
-                    ah.log.warning("End function returning: %s" % False)
-                return False
-            else:
-                raise
+        response = self.api.task(self.habit_id)
         if ah.user_settings["keep_log"]:
             ah.log.debug(response['notes'])
         # Try to grab the scorecount and score since date
         if ah.user_settings["keep_log"]:
             ah.log.debug("trying to load note string: %s" % response['notes'])
         try:
-            self.hnote = json.loads(response['notes'])
+            notesData = self.load_data_from_notes(response)
+            if notesData == None:
+                print("Couldn't load data from Habitica. Data: " + response["notes"])
+                raise Exception("Couldnt load data from Habitica")
+
+            self.hnote = notesData
         except:
             if ah.user_settings["keep_log"]:
                 ah.log.warning("Reset 1")
@@ -425,8 +418,13 @@ class Habitica(object):
             habitID = self.habit_id
             if ah.user_settings["keep_log"]:
                 ah.log.debug("posting scorecounter: %s" % self.hnote)
-            datastring = json.dumps(self.hnote)
-            data = {"notes": datastring}
+
+            ah.log.error("TEST")
+            data = self.create_task_data(self.hnote)
+            if data == None:
+                raise Exception("Couldnt create task data")
+            #datastring = json.dumps(self.hnote)
+            #data = {"notes": datastring}
             self.api.update_task(habitID, data)
             if ah.user_settings["keep_log"]:
                 ah.log.debug("End function returning: %s" % True)
@@ -435,6 +433,32 @@ class Habitica(object):
             if ah.user_settings["keep_log"]:
                 ah.log.error("End function returning: %s" % False)
             return False
+            
+    def create_task_data(self, jsonNote):
+        outData = None
+        response = self.api.task(self.habit_id)
+        existingNote: str = response['notes']
+        jsonStr: str = json.dumps(jsonNote)
+
+        existingDataStart: int = -1
+        existingDataStart = existingNote.rfind(NOTES_START_TAG) + 1
+        if existingDataStart == -1:
+            existingNote = existingNote[0:existingDataStart]
+
+        outData = {"notes": existingNote + NOTES_START_TAG + jsonStr + NOTES_END_TAG}
+        return outData
+
+    def load_data_from_notes(self, response):        
+        outData = None
+        toParse: str = response['notes']
+        endIDX: int = toParse.rfind(NOTES_END_TAG)
+        if endIDX != -1:
+            startIDX: int = toParse.rfind(NOTES_START_TAG)
+            jsonText = toParse[startIDX+len(NOTES_START_TAG):endIDX]
+            outData = json.loads(jsonText)
+
+        return outData
+            
 
     def test_internet(self):
         if ah.user_settings["keep_log"]:
@@ -454,19 +478,19 @@ class Habitica(object):
             diff = int(new_lvl) - int(self.lvl)
             hrpg_response += "\nYOU LEVELED UP! NEW LEVEL: %s" % (new_lvl)
             self.save_avatar()  # save the new avatar!
-        hrpg_response += "\nHP: %s" % (int(new_hp))
+        hrpg_response += "\nHP: %s" % (int(self.hp))
         if new_hp > self.hp:
             diff = int(new_hp) - int(self.hp)
             hrpg_response += "  +%s!" % (diff)
-        hrpg_response += "\nXP: %s" % (int(new_xp))
+        hrpg_response += "\nXP: %s" % (int(self.xp))
         if new_xp > self.xp:
             diff = int(new_xp) - int(self.xp)
             hrpg_response += "  +%s!" % (diff)
-        hrpg_response += "\nGP: %s" % (round(new_gp, 2))
+        hrpg_response += "\nGP: %s" % (round(self.gp, 2))
         if new_gp > self.gp:
             diff = int(new_gp) - int(self.gp)
             hrpg_response += "  +%s!" % (diff)
-        hrpg_response += "\nMP: %s" % (int(new_mp))
+        hrpg_response += "\nMP: %s" % (int(self.mp))
         if new_mp > self.mp:
             diff = int(new_mp) - int(self.mp)
             hrpg_response += "  +%s!" % (diff)
