@@ -1,1 +1,0 @@
-robocopy %~dp0 "C:\Users\Callu\AppData\Roaming\Anki2\addons21\AnkiHabitica" /e 
